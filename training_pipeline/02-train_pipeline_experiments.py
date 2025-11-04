@@ -13,6 +13,7 @@ from mlflow.models.signature import infer_signature
 from sklearn.metrics import root_mean_squared_error
 from sklearn.feature_extraction import DictVectorizer
 from prefect import flow, task
+from mlflow import MlflowClient
 
 #prefect server start
 
@@ -215,13 +216,57 @@ def train_best_model(X_train, X_val, y_train, y_val, dv, best_params) -> None:
         )
     return None
 
+"""
+Para automatizar la obtención de `run_uri` sin buscar `run_id` manualmente, seguimos la documentación oficial de MLflow: 
+(1) con `mlflow.search_runs` podemos **consultar y ordenar** los runs por una métrica usando `order_by`, por ejemplo `["metrics.rmse ASC"]`, y devolver el mejor `run_id` como primer resultado. Según la guía oficial *Search Runs*, se permite ordenar por columnas de métricas con `ASC`/`DESC`. :contentReference[oaicite:0]{index=0} 
+(2) Con ese `run_id` construimos `run_uri = f"runs:/{run_id}/model"` (el sufijo coincide con el `name` usado al loguear el artefacto del modelo) y registramos el modelo con `mlflow.register_model(model_uri, name)`, tal como indica la guía oficial de *Register a Model*. :contentReference[oaicite:1]{index=1} 
+(3) Finalmente, asignamos el alias `@champion` a la versión recién registrada usando la API de cliente `MlflowClient.set_registered_model_alias`, documentada en la referencia oficial del cliente y en la página de *Model Registry*. :contentReference[oaicite:2]{index=2}
+"""
+# ─────────────────────────────────────────────────────────────────────────────
+# NUEVA TASK: REGISTRO AUTOMÁTICO DEL MEJOR RUN EN EL MODEL REGISTRY
+# ─────────────────────────────────────────────────────────────────────────────
+@task(name="Model Registry")
+def model_registry(EXPERIMENT_NAME):
+    client = MlflowClient()
+
+    runs = mlflow.search_runs(
+    experiment_names=[EXPERIMENT_NAME],
+    order_by=["metrics.rmse ASC"],
+    output_format="list"
+    )
+
+    if len(runs) > 0:
+        best_run = runs[0]
+        print("🏆 Champion Run encontrado:")
+        print(f"Run ID: {best_run.info.run_id}")
+        print(f"RMSE: {best_run.data.metrics['rmse']}")
+        print(f"Params: {best_run.data.params}")
+    else:
+        print("⚠️ No se encontraron runs con métrica RMSE.")
+
+    model_name = 'workspace.default.nyc-taxi-model-prefect'
+
+    # Store the result (best model)
+    result = mlflow.register_model(
+        model_uri=f"runs:/{best_run.info.run_id}/model",
+        name=model_name
+    )    
+
+    # Model Version and Alias (Champion)
+    model_version = result.version
+    new_alias = "Champion"
+
+    # Register model
+    client.set_registered_model_alias(
+        name=model_name,
+        alias=new_alias,
+        version=model_version
+    )
+
 @flow(name="Main Flow")
 def main_flow(year: int, month_train: str, month_val: str) -> None:
     """The main training pipeline"""
 
-    print("-----------------")
-    print(f"{os.getcwd()}")
-    
     train_path = f"../data/green_tripdata_{year}-{month_train}.parquet"
     val_path = f"../data/green_tripdata_{year}-{month_val}.parquet"
     
@@ -244,6 +289,8 @@ def main_flow(year: int, month_train: str, month_val: str) -> None:
     # Train
     train_best_model(X_train, X_val, y_train, y_val, dv, best_params)
 
+    # Model Registry
+    model_registry(EXPERIMENT_NAME)
+
 if __name__ == "__main__":
     main_flow(year=2025, month_train="01", month_val="02")
-
