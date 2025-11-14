@@ -1,3 +1,4 @@
+# Import Libraries
 import streamlit as st
 import requests
 import json
@@ -8,6 +9,7 @@ st.write("""
 
 st.sidebar.header('User Input Parameters')
 
+# Input Features
 def user_input_features():
     PU = st.sidebar.text_input("PU Location ID", "80")
     DO = st.sidebar.text_input("DO Location ID", "60")
@@ -24,6 +26,7 @@ def user_input_features():
 
 input_dict = user_input_features()
 
+# Llamar a la API
 if st.button('Predict'):
     response = requests.post(
         url="http://127.0.0.1:8000/api/v1/predict",
