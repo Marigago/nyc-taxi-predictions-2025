@@ -245,11 +245,17 @@ def train_rf(X_train, X_val, y_train, y_val):
 @task(name="P6F-Register-Challenger")
 def register_challenger(best_family: str, best_rmse: float, best_model, X_sample, dv: DictVectorizer):
     pathlib.Path("preprocessor").mkdir(exist_ok=True)
-    with open("preprocessor/dv.pkl", "wb") as f_out:
+    with open("../preprocessor/preprocessor.b", "wb") as f_out:
         pickle.dump(dv, f_out)
 
-    input_example = _as_dense(X_sample, rows=5)
-    signature = infer_signature(input_example, best_model.predict(input_example))
+    # <<< CHANGED: construir input_example como DataFrame con nombres de features del DictVectorizer
+    X_sample_dense = _as_dense(X_sample, rows=5)
+    feature_names = dv.get_feature_names_out()
+    input_example = pd.DataFrame(X_sample_dense, columns=feature_names)
+
+    preds_sample = best_model.predict(X_sample_dense)
+    signature = infer_signature(input_example, preds_sample)
+    # >>> FIN CAMBIO
 
     run_name = f"{HW_PREFIX}_CHALLENGER_REG_{best_family}"
     with mlflow.start_run(run_name=run_name):
@@ -261,7 +267,7 @@ def register_challenger(best_family: str, best_rmse: float, best_model, X_sample
             "acronym": f"{HW_PREFIX}{'GBR' if best_family=='GradientBoostingRegressor' else 'RF'}_CHAL",
         })
         mlflow.log_metric("validation_rmse", best_rmse)
-        mlflow.log_artifact("preprocessor/dv.pkl", artifact_path="preprocessor")
+        mlflow.log_artifact("../preprocessor/preprocessor.b", artifact_path="preprocessor")
         mlflow.sklearn.log_model(best_model, name="model", input_example=input_example, signature=signature)
         run_id = mlflow.active_run().info.run_id
 
@@ -280,17 +286,22 @@ def register_challenger(best_family: str, best_rmse: float, best_model, X_sample
 # Evaluación Champion vs Challenger (marzo 2025)
 # =========================
 @task(name="P6F-Prepare-March")
-def prepare_march_features(march_path: pathlib.Path) -> Tuple[np.ndarray, np.ndarray]:
+def prepare_march_features(march_path: pathlib.Path) -> Tuple[pd.DataFrame, np.ndarray]:
     df_mar = read_dataframe.fn(str(march_path))
     with open("preprocessor/dv.pkl", "rb") as f_in:
         dv_loaded: DictVectorizer = pickle.load(f_in)
 
     dfc = df_mar.copy()
     dfc['PU_DO'] = dfc['PULocationID'] + '_' + dfc['DOLocationID']
-    X_mar = dv_loaded.transform(dfc[['PU_DO','trip_distance']].to_dict(orient='records'))
+    X_mar_sparse = dv_loaded.transform(dfc[['PU_DO','trip_distance']].to_dict(orient='records'))
     y_mar = df_mar['duration'].values
-    X_mar = _as_dense(X_mar)
-    return X_mar, y_mar
+
+    # <<< CHANGED: construir DataFrame con nombres de columnas del dv
+    X_mar_dense = _as_dense(X_mar_sparse)
+    feature_names = dv_loaded.get_feature_names_out()
+    X_mar_df = pd.DataFrame(X_mar_dense, columns=feature_names)
+    return X_mar_df, y_mar
+    # >>> FIN CAMBIO
 
 def _load_by_alias_both(alias: str):
     for cand in [alias, alias.capitalize()]:
@@ -301,7 +312,7 @@ def _load_by_alias_both(alias: str):
     raise RuntimeError(f"No se pudo cargar alias {alias}/{alias.capitalize()} en {MODEL_NAME}")
 
 @task(name="P6F-Compare-Champ-Chal")
-def compare_champion_challenger(X_mar: np.ndarray, y_mar: np.ndarray) -> Dict[str, float]:
+def compare_champion_challenger(X_mar: pd.DataFrame, y_mar: np.ndarray) -> Dict[str, float]:
     champion = _load_by_alias_both("champion")
     challenger = _load_by_alias_both("challenger")
     rmse_champ = root_mean_squared_error(y_mar, champion.predict(X_mar))
