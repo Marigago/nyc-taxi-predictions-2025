@@ -32,7 +32,7 @@ client.download_artifacts(
 with open("preprocessor/preprocessor.b", "rb") as f_in:
     dv = pickle.load(f_in)
 
-model_name = "workspace.default.nyc-taxi-model"
+model_name = "workspace.default.nyc-taxi-model-prefect"
 alias = "champion"
 
 model_uri = f"models:/{model_name}@{alias}"
